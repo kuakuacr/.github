@@ -1,0 +1,52 @@
+# Normalización de fin de línea.
+#
+# Crítico: se desarrolla en Windows (CRLF) y se ejecuta en Linux (LF).
+# Un script .sh guardado con CRLF falla en el VPS con "bad interpreter: No such
+# file or directory" — un error que no menciona los saltos de línea por ningún lado
+# y cuesta horas encontrar. Lo mismo aplica a los workflows que corren en los
+# runners de GitHub.
+
+* text=auto eol=lf
+
+# Todo lo que ejecuta Linux: LF obligatorio
+*.sh      text eol=lf
+*.bash    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.toml    text eol=lf
+*.json    text eol=lf
+*.js      text eol=lf
+*.ts      text eol=lf
+*.py      text eol=lf
+*.rb      text eol=lf
+*.sql     text eol=lf
+*.conf    text eol=lf
+*.env     text eol=lf
+*.example text eol=lf
+Dockerfile* text eol=lf
+Makefile  text eol=lf
+
+# Archivos cifrados con SOPS: texto, pero nunca se tocan al hacer diff
+*.enc.env  text eol=lf -diff
+*.enc.json text eol=lf -diff
+*.enc.yaml text eol=lf -diff
+
+# Scripts de Windows: CRLF
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binarios: sin conversión, sin diff
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.ai   binary
+*.zip  binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.sqlite binary
