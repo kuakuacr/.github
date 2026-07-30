@@ -1,0 +1,148 @@
+# Configuración de gitleaks para los repositorios de Kua'kua.
+#
+# ⚠️ Este archivo se copia a repositorios PÚBLICOS y PRIVADOS por igual.
+# Por eso las reglas son SIEMPRE patrones, NUNCA valores literales.
+# Escribir un token real acá para "detectarlo" sería publicarlo.
+
+title = "Kua'kua"
+
+[extend]
+useDefault = true # conserva las ~170 reglas estándar de gitleaks
+
+# ─────────────────────────────────────────────────────────────
+# Reglas específicas de los servicios que usa Kua'kua
+# ─────────────────────────────────────────────────────────────
+
+[[rules]]
+id = "slack-bot-token"
+description = "Token de bot de Slack (xoxb-)"
+regex = '''xoxb-[0-9]{10,16}-[0-9]{10,16}-[A-Za-z0-9]{20,}'''
+tags = ["slack", "token"]
+
+[[rules]]
+id = "slack-app-token"
+description = "Token de aplicación de Slack (xapp-)"
+regex = '''xapp-[0-9]-[A-Z0-9]{8,}-[0-9]{10,}-[a-f0-9]{40,}'''
+tags = ["slack", "token"]
+
+[[rules]]
+id = "cloudflare-user-token"
+description = "Token de API de Cloudflare (cfut_)"
+regex = '''cfut_[A-Za-z0-9]{32,}'''
+tags = ["cloudflare", "token"]
+
+[[rules]]
+id = "twilio-account-sid"
+description = "Account SID de Twilio"
+regex = '''\bAC[0-9a-fA-F]{32}\b'''
+tags = ["twilio"]
+
+[[rules]]
+id = "twilio-auth-token"
+description = "Auth token de Twilio (32 hex junto a una palabra clave)"
+regex = '''(?i)(twilio[_-]?(auth)?[_-]?token|auth[_-]?token)['"\s:=]{1,10}([0-9a-f]{32})'''
+secretGroup = 3
+tags = ["twilio"]
+
+[[rules]]
+id = "telegram-bot-token"
+description = "Token de bot de Telegram"
+regex = '''\b[0-9]{8,12}:AA[A-Za-z0-9_-]{30,}\b'''
+tags = ["telegram"]
+
+[[rules]]
+id = "google-api-key"
+description = "API key de Google / Gemini"
+regex = '''\bAIza[0-9A-Za-z_\-]{35}\b'''
+tags = ["google", "gemini"]
+
+[[rules]]
+id = "google-oauth-short-token"
+description = "Token corto de Google (AQ.…) — usado por Captain/Gemini"
+regex = '''\bAQ\.[A-Za-z0-9_\-]{30,}\b'''
+tags = ["google", "gemini"]
+
+[[rules]]
+id = "chatwoot-access-token"
+description = "Token de acceso de Chatwoot"
+regex = '''(?i)(api_access_token|chatwoot[_-]?api[_-]?token|platform[_-]?token)['"\s:=]{1,10}['"]?([A-Za-z0-9]{20,32})['"]?'''
+secretGroup = 2
+tags = ["chatwoot"]
+
+[[rules]]
+id = "n8n-encryption-key"
+description = "N8N_ENCRYPTION_KEY o JWT secret (64 hex)"
+regex = '''(?i)(n8n[_-]?(encryption[_-]?key|jwt[_-]?secret)|encryption[_-]?key)['"\s:=]{1,10}['"]?([0-9a-f]{64})['"]?'''
+secretGroup = 2
+tags = ["n8n"]
+
+[[rules]]
+id = "evolution-api-key"
+description = "API key de Evolution (WhatsApp)"
+regex = '''(?i)(evolution[_-]?api[_-]?key|apikey)['"\s:=]{1,10}['"]?([0-9a-f]{64})['"]?'''
+secretGroup = 2
+tags = ["evolution", "whatsapp"]
+
+[[rules]]
+id = "r2-credentials"
+description = "Credenciales de Cloudflare R2 / S3"
+regex = '''(?i)(r2|s3|aws)[_-]?(access[_-]?key|secret[_-]?(access[_-]?)?key)[_-]?(id)?['"\s:=]{1,10}['"]?([0-9a-f]{32,64})['"]?'''
+secretGroup = 5
+tags = ["r2", "cloudflare", "storage"]
+
+[[rules]]
+id = "postgres-password"
+description = "Contraseña de Postgres en texto plano"
+regex = '''(?i)(postgres[_-]?password|pg[_-]?pass(word)?|db[_-]?password|POSTGRES_PASSWORD)['"\s:=]{1,10}['"]?([A-Za-z0-9!@#$%^&*_\-]{12,})['"]?'''
+secretGroup = 3
+tags = ["postgres", "database"]
+
+[[rules]]
+id = "smtp-password"
+description = "Contraseña de SMTP"
+regex = '''(?i)(smtp[_-]?pass(word)?|mail[_-]?password)['"\s:=]{1,10}['"]?([^\s'"]{8,})['"]?'''
+secretGroup = 3
+tags = ["smtp", "email"]
+
+[[rules]]
+id = "meta-app-secret"
+description = "App secret de Facebook / Instagram (32 hex junto a palabra clave)"
+regex = '''(?i)(app[_-]?secret|fb[_-]?secret|ig[_-]?secret)['"\s:=]{1,10}['"]?([0-9a-f]{32})['"]?'''
+secretGroup = 2
+tags = ["meta", "facebook", "instagram"]
+
+[[rules]]
+id = "age-private-key"
+description = "Llave privada age — nunca debe entrar a un repositorio"
+regex = '''AGE-SECRET-KEY-1[0-9A-Z]{50,}'''
+tags = ["age", "sops", "critico"]
+
+[[rules]]
+id = "tailscale-auth-key"
+description = "Auth key de Tailscale"
+regex = '''\btskey-(auth|client)-[A-Za-z0-9\-]{10,}'''
+tags = ["tailscale"]
+
+# ─────────────────────────────────────────────────────────────
+# Exclusiones
+# ─────────────────────────────────────────────────────────────
+
+[allowlist]
+description = "Rutas y patrones que no son secretos reales"
+
+paths = [
+  '''\.enc\.env$''',            # cifrado con SOPS: es ciphertext, no un secreto en claro
+  '''\.enc\.(json|yaml|yml)$''',
+  '''\.env\.example$''',        # solo nombres de claves, sin valores
+  '''(^|/)\.gitleaks\.toml$''', # este mismo archivo (contiene patrones, no secretos)
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)node_modules/''',
+  '''(^|/)CHANGELOG\.md$''',
+]
+
+regexes = [
+  '''ENC\[AES256_GCM''',        # marcador de valor cifrado por SOPS
+  '''(?i)(example|sample|dummy|placeholder|changeme|tu[_-]?token|your[_-]?token)''',
+  '''\$\{[A-Z_][A-Z0-9_]*\}''', # referencias a variables: ${POSTGRES_PASSWORD}
+  '''<[A-Z_]{3,}>''',           # marcadores tipo <TOKEN_AQUI>
+]

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Convenciones de ingeniería
+    url: https://github.com/kuakuacr/.github/blob/main/CONVENTIONS.md
+    about: Cómo se nombran, ramifican, versionan y despliegan los repositorios.
+  - name: 🔐 Reportar algo de seguridad
+    url: https://github.com/kuakuacr/.github/blob/main/SECURITY.md
+    about: No abras un issue con credenciales. Acá está el procedimiento correcto.

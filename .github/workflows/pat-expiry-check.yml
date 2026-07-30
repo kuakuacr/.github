@@ -1,0 +1,119 @@
+name: Vigilancia de expiración del PAT
+
+# Los PAT de alcance fino expiran (máx. 1 año). Cuando RELEASE_BOT_PAT expira,
+# los releases dejan de disparar despliegues EN SILENCIO — no hay error, no hay
+# aviso: simplemente nada se despliega. Este job convierte esa falla silenciosa
+# en un issue visible.
+#
+# Sustituir por un GitHub App installation token (que no expira) en la Fase 6.
+
+on:
+  schedule:
+    - cron: "0 13 * * 1" # lunes 13:00 UTC = 07:00 Costa Rica
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  UMBRAL_DIAS: 30
+  TITULO: "🔑 RELEASE_BOT_PAT necesita rotación"
+
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consultar expiración del token
+        id: probe
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_PAT }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "estado=ausente" >> "$GITHUB_OUTPUT"
+            echo "detalle=El secreto RELEASE_BOT_PAT no está configurado en este repositorio." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # -i incluye las cabeceras de respuesta; ahí viene la expiración.
+          RESP=$(gh api -i user 2>&1) || {
+            echo "estado=invalido" >> "$GITHUB_OUTPUT"
+            echo "detalle=El token fue rechazado por la API de GitHub (revocado, expirado o sin permisos)." >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          EXP=$(printf '%s' "$RESP" \
+            | grep -i '^github-authentication-token-expiration:' \
+            | sed 's/^[^:]*:[[:space:]]*//' | tr -d '\r')
+
+          if [ -z "$EXP" ]; then
+            # Token clásico sin fecha de expiración: nada que vigilar.
+            echo "estado=sin_expiracion" >> "$GITHUB_OUTPUT"
+            echo "detalle=El token no declara fecha de expiración." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          EXP_TS=$(date -u -d "$EXP" +%s 2>/dev/null || echo "")
+          if [ -z "$EXP_TS" ]; then
+            echo "estado=indeterminado" >> "$GITHUB_OUTPUT"
+            echo "detalle=No se pudo interpretar la fecha de expiración: $EXP" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          DIAS=$(( (EXP_TS - $(date -u +%s)) / 86400 ))
+          echo "dias=$DIAS" >> "$GITHUB_OUTPUT"
+          echo "fecha=$EXP" >> "$GITHUB_OUTPUT"
+          echo "Expira en $DIAS día(s) — $EXP"
+
+          if [ "$DIAS" -le "${UMBRAL_DIAS}" ]; then
+            echo "estado=por_expirar" >> "$GITHUB_OUTPUT"
+            echo "detalle=El token expira en $DIAS día(s) ($EXP)." >> "$GITHUB_OUTPUT"
+          else
+            echo "estado=ok" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Abrir o actualizar el issue de rotación
+        if: steps.probe.outputs.estado != 'ok' && steps.probe.outputs.estado != 'sin_expiracion'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ESTADO: ${{ steps.probe.outputs.estado }}
+          DETALLE: ${{ steps.probe.outputs.detalle }}
+        run: |
+          set -euo pipefail
+
+          CUERPO=$(cat <<EOF
+          **Estado:** \`${ESTADO}\`
+
+          ${DETALLE}
+
+          ### Por qué importa
+          \`RELEASE_BOT_PAT\` es lo que permite que un release dispare el workflow de
+          despliegue. El \`GITHUB_TOKEN\` por defecto no puede hacerlo: GitHub bloquea
+          que sus eventos disparen otros workflows. Si este token expira, los releases
+          se siguen publicando pero **nada se despliega**, sin ningún error visible.
+
+          ### Cómo rotarlo
+          1. Crear un PAT de alcance fino nuevo con permisos \`contents: write\`,
+             \`pull_requests: write\`, \`actions: write\` sobre los repos de \`kuakuacr\`.
+          2. Actualizar el secreto \`RELEASE_BOT_PAT\` **en cada repo que despliega**
+             (en una cuenta personal Free los secretos son por repositorio).
+          3. Revocar el token viejo.
+          4. Ejecutar este workflow manualmente para confirmar que quedó en \`ok\`.
+
+          ---
+          _Generado automáticamente por \`pat-expiry-check.yml\`._
+          EOF
+          )
+
+          EXISTENTE=$(gh issue list --state open --search "$TITULO in:title" \
+            --json number --jq '.[0].number // empty')
+
+          if [ -n "$EXISTENTE" ]; then
+            gh issue comment "$EXISTENTE" --body "$CUERPO"
+            echo "✓ comentario agregado al issue #$EXISTENTE"
+          else
+            gh issue create --title "$TITULO" --body "$CUERPO"
+            echo "✓ issue creado"
+          fi

@@ -1,0 +1,170 @@
+name: Deploy (Tailscale)
+
+# Workflow reutilizable de despliegue a los VPS de Kua'kua a través de la tailnet.
+#
+# El runner efímero de GitHub se une a la tailnet con tag:ci, sincroniza archivos
+# por rsync sobre Tailscale SSH, ejecuta un comando remoto opcional, y se destruye.
+# No se almacena ninguna llave SSH privada en GitHub: la autenticación la resuelve
+# Tailscale SSH contra la ACL (tag:ci -> tag:prod, usuario kuakua).
+#
+# Uso desde un repo:
+#   jobs:
+#     deploy:
+#       uses: kuakuacr/.github/.github/workflows/deploy-tailscale.yml@main
+#       with:
+#         host: kuakua-core
+#         source_path: sinpes/
+#         remote_path: /opt/kuakua/sinpes/
+#         post_deploy: docker restart kuakua-sinpes
+#         stamp_html: true
+#       secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Tag/branch/SHA a desplegar. Vacío = el ref que disparó el workflow."
+        type: string
+        default: ""
+      host:
+        description: "Nombre del host en la tailnet (ej. kuakua-core)"
+        type: string
+        required: true
+      ssh_user:
+        description: "Usuario SSH remoto"
+        type: string
+        default: "kuakua"
+      source_path:
+        description: "Ruta dentro del repo a sincronizar (termina en / para copiar el contenido)"
+        type: string
+        required: true
+      remote_path:
+        description: "Ruta destino en el VPS"
+        type: string
+        required: true
+      post_deploy:
+        description: "Comando a ejecutar por SSH después del rsync (opcional)"
+        type: string
+        default: ""
+      secrets_file:
+        description: "Archivo SOPS a descifrar (ej. core.enc.env). Vacío = no se descifra nada."
+        type: string
+        default: ""
+      secrets_remote_path:
+        description: "Ruta destino del archivo descifrado en el VPS (modo 600)"
+        type: string
+        default: ""
+      stamp_html:
+        description: "Inyectar <!-- build: sha fecha --> en los .html antes de subir"
+        type: boolean
+        default: false
+      dry_run:
+        description: "rsync --dry-run: muestra qué cambiaría sin escribir nada"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: "deploy → ${{ inputs.host }}:${{ inputs.remote_path }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Sello de build en HTML
+        if: inputs.stamp_html
+        run: |
+          set -euo pipefail
+          SELLO="<!-- build: ${GITHUB_SHA} $(date -u +%Y-%m-%dT%H:%M:%SZ) -->"
+          COUNT=0
+          while IFS= read -r -d '' f; do
+            # Reemplaza un sello previo si existe; si no, lo agrega al final
+            if grep -q '<!-- build: ' "$f"; then
+              sed -i "s|<!-- build: .* -->|${SELLO}|" "$f"
+            else
+              printf '\n%s\n' "$SELLO" >> "$f"
+            fi
+            COUNT=$((COUNT+1))
+          done < <(find "${{ inputs.source_path }}" -type f -name '*.html' -print0)
+          echo "✓ sello aplicado a $COUNT archivo(s)"
+
+      - name: Instalar sops y age
+        if: inputs.secrets_file != ''
+        run: |
+          set -euo pipefail
+          SOPS_VERSION=3.12.0
+          curl -sSfL -o /tmp/sops \
+            "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          sudo install -m 0755 /tmp/sops /usr/local/bin/sops
+          sops --version
+
+      - name: Descifrar secretos
+        if: inputs.secrets_file != ''
+        env:
+          AGE_PRIVATE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/age"
+          printf '%s\n' "$AGE_PRIVATE_KEY" > "$RUNNER_TEMP/age/key.txt"
+          export SOPS_AGE_KEY_FILE="$RUNNER_TEMP/age/key.txt"
+          sops -d "${{ inputs.secrets_file }}" > "$RUNNER_TEMP/decrypted.env"
+          # Nunca imprimimos valores: solo confirmamos cuántas claves salieron.
+          echo "✓ $(grep -c '^[A-Za-z_][A-Za-z0-9_]*=' "$RUNNER_TEMP/decrypted.env") claves descifradas"
+
+      - name: Conectar a la tailnet
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Sincronizar archivos
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          SRC: ${{ inputs.source_path }}
+          DEST: ${{ inputs.ssh_user }}@${{ inputs.host }}:${{ inputs.remote_path }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          RSYNC_ARGS=(-az --itemize-changes --human-readable)
+          if [ "$DRY_RUN" = "true" ]; then RSYNC_ARGS+=(--dry-run); fi
+          rsync "${RSYNC_ARGS[@]}" -e "ssh $SSH_OPTS" "$SRC" "$DEST"
+
+      - name: Instalar archivo de secretos en el VPS
+        if: inputs.secrets_file != '' && inputs.secrets_remote_path != '' && !inputs.dry_run
+        env:
+          TARGET: ${{ inputs.ssh_user }}@${{ inputs.host }}
+          REMOTE_SECRETS: ${{ inputs.secrets_remote_path }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          # shellcheck disable=SC2086
+          scp $SSH_OPTS "$RUNNER_TEMP/decrypted.env" "$TARGET:$REMOTE_SECRETS"
+          # shellcheck disable=SC2086
+          ssh $SSH_OPTS "$TARGET" "chmod 600 \"$REMOTE_SECRETS\""
+
+      - name: Comando post-despliegue
+        if: inputs.post_deploy != '' && !inputs.dry_run
+        env:
+          TARGET: ${{ inputs.ssh_user }}@${{ inputs.host }}
+          POST_DEPLOY: ${{ inputs.post_deploy }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          # El comando viaja por stdin: nunca se interpola en la línea de comandos del runner.
+          # shellcheck disable=SC2086
+          printf '%s\n' "$POST_DEPLOY" | ssh $SSH_OPTS "$TARGET" 'bash -s'
+
+      - name: Borrar material sensible del runner
+        if: always()
+        run: |
+          set -euo pipefail
+          for f in "$RUNNER_TEMP/age/key.txt" "$RUNNER_TEMP/decrypted.env"; do
+            [ -f "$f" ] && shred -u "$f" 2>/dev/null || true
+          done
+          echo "✓ limpieza completa"

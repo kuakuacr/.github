@@ -1,0 +1,151 @@
+name: CI
+
+# Workflow reutilizable. Los repos de Kua'kua lo invocan con:
+#   jobs:
+#     ci:
+#       uses: kuakuacr/.github/.github/workflows/ci.yml@main
+#       with: { node: true, docker: true }
+#
+# Siempre corre gitleaks. El resto de linters se activan por input.
+
+on:
+  workflow_call:
+    inputs:
+      node:
+        description: "Validar sintaxis JavaScript/Node"
+        type: boolean
+        default: false
+      docker:
+        description: "hadolint sobre Dockerfiles"
+        type: boolean
+        default: false
+      yaml:
+        description: "yamllint sobre YAML"
+        type: boolean
+        default: true
+      shell:
+        description: "shellcheck sobre scripts .sh"
+        type: boolean
+        default: true
+      html:
+        description: "htmlhint sobre archivos .html"
+        type: boolean
+        default: false
+      n8n:
+        description: "Validar JSON de workflows n8n y sanidad de nodos"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  HADOLINT_VERSION: "2.14.0"
+
+jobs:
+  secretos:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0 # historia completa: un secreto en un commit anterior del branch también cuenta
+
+      - name: Instalar gitleaks
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Escanear árbol de trabajo
+        run: |
+          set -euo pipefail
+          ARGS=(dir . --redact --exit-code 1 --verbose)
+          [ -f .gitleaks.toml ] && ARGS+=(--config .gitleaks.toml)
+          gitleaks "${ARGS[@]}"
+
+      - name: Escanear historia de commits
+        run: |
+          set -euo pipefail
+          ARGS=(git . --redact --exit-code 1)
+          [ -f .gitleaks.toml ] && ARGS+=(--config .gitleaks.toml)
+          gitleaks "${ARGS[@]}"
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: yamllint
+        if: inputs.yaml
+        run: |
+          set -euo pipefail
+          pipx install yamllint
+          CFG=".yamllint.yml"
+          [ -f "$CFG" ] || CFG="{extends: default, rules: {line-length: disable, document-start: disable, truthy: {check-keys: false}}}"
+          yamllint -d "$CFG" .
+
+      - name: shellcheck
+        if: inputs.shell
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(find . -type f -name '*.sh' -not -path './.git/*')
+          if [ ${#FILES[@]} -eq 0 ]; then echo "sin scripts .sh"; exit 0; fi
+          shellcheck -S warning "${FILES[@]}"
+
+      - name: hadolint
+        if: inputs.docker
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(find . -type f -name 'Dockerfile*' -not -path './.git/*')
+          if [ ${#FILES[@]} -eq 0 ]; then echo "sin Dockerfiles"; exit 0; fi
+          curl -sSfL -o /tmp/hadolint \
+            "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64"
+          sudo install -m 0755 /tmp/hadolint /usr/local/bin/hadolint
+          hadolint "${FILES[@]}"
+
+      - name: node --check
+        if: inputs.node
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(find . -type f -name '*.js' -not -path './.git/*' -not -path './node_modules/*')
+          if [ ${#FILES[@]} -eq 0 ]; then echo "sin archivos .js"; exit 0; fi
+          for f in "${FILES[@]}"; do node --check "$f"; done
+          echo "✓ ${#FILES[@]} archivos JS con sintaxis válida"
+
+      - name: htmlhint
+        if: inputs.html
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(find . -type f -name '*.html' -not -path './.git/*')
+          if [ ${#FILES[@]} -eq 0 ]; then echo "sin archivos .html"; exit 0; fi
+          npx --yes htmlhint "${FILES[@]}"
+
+      - name: Validar workflows n8n
+        if: inputs.n8n
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          FILES=(workflows/*.json)
+          if [ ${#FILES[@]} -eq 0 ]; then echo "::error::no hay workflows/*.json"; exit 1; fi
+          FALLOS=0
+          for f in "${FILES[@]}"; do
+            if ! jq empty "$f" 2>/dev/null; then
+              echo "::error file=$f::JSON inválido"; FALLOS=1; continue
+            fi
+            # Sanidad mínima: debe tener id, name y un arreglo nodes no vacío
+            if ! jq -e '(.id? // empty) and (.name? // empty) and (.nodes | type == "array" and length > 0)' "$f" >/dev/null; then
+              echo "::error file=$f::falta id/name/nodes"; FALLOS=1; continue
+            fi
+            # Regla D10: los Code nodes no pueden usar $helpers ni fetch (no existen en el task runner 2.26.8)
+            if jq -e '[.nodes[] | select(.type=="n8n-nodes-base.code") | .parameters.jsCode // ""]
+                      | join("\n") | test("\\$helpers|(^|[^.\\w])fetch\\s*\\(")' "$f" >/dev/null; then
+              echo "::error file=$f::Code node usa \$helpers o fetch — prohibido (ver docs/RULES.md D10)"; FALLOS=1
+            fi
+          done
+          [ "$FALLOS" -eq 0 ] && echo "✓ ${#FILES[@]} workflows válidos"
+          exit "$FALLOS"

@@ -1,0 +1,72 @@
+name: 🐛 Reportar una falla
+description: Algo dejó de funcionar o se comporta distinto de lo esperado
+title: "[falla] "
+labels: ["falla"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Antes de abrir: si esto involucra una credencial expuesta, **no la pegues acá**.
+        Escribile directamente a Diego.
+
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema afectado
+      options:
+        - Dashboard SINPE (sinpes.kuakua.io)
+        - Contador de fechas (contador.kuakua.cr)
+        - Workflows de n8n
+        - Chatwoot
+        - Bot de Slack
+        - Odoo
+        - Strapi / CMS
+        - Infraestructura (Docker, Traefik, DNS)
+        - Otro / no estoy seguro
+    validations:
+      required: true
+
+  - type: textarea
+    id: que_pasa
+    attributes:
+      label: Qué está pasando
+      description: Qué observaste, con la mayor precisión posible.
+      placeholder: |
+        Los pagos SINPE entran a la base pero no aparecen vinculados en Chatwoot.
+    validations:
+      required: true
+
+  - type: textarea
+    id: que_esperabas
+    attributes:
+      label: Qué esperabas que pasara
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducir
+    attributes:
+      label: Cómo reproducirlo
+      description: Los pasos exactos. Si es intermitente, decilo — también es información.
+      placeholder: |
+        1. Llega un SMS del BN
+        2. Se ve el registro nuevo en el dashboard
+        3. La columna CW aparece tachada
+    validations:
+      required: false
+
+  - type: input
+    id: cuando
+    attributes:
+      label: Desde cuándo
+      description: Fecha y hora aproximadas, o el cambio después del cual empezó.
+      placeholder: "desde el deploy del 29 de julio por la noche"
+
+  - type: textarea
+    id: evidencia
+    attributes:
+      label: Logs o evidencia
+      description: |
+        Pegá logs, IDs de ejecución de n8n, capturas.
+        **Revisá que no haya tokens ni contraseñas antes de pegar.**
+      render: shell

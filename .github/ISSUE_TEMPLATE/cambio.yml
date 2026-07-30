@@ -1,0 +1,61 @@
+name: ✨ Solicitar un cambio
+description: Una funcionalidad nueva, un ajuste o una mejora
+title: "[cambio] "
+labels: ["cambio"]
+body:
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema afectado
+      options:
+        - Dashboard SINPE (sinpes.kuakua.io)
+        - Contador de fechas (contador.kuakua.cr)
+        - Workflows de n8n
+        - Chatwoot
+        - Bot de Slack
+        - Odoo
+        - Strapi / CMS
+        - Infraestructura (Docker, Traefik, DNS)
+        - Marca y assets
+        - Otro / varios
+    validations:
+      required: true
+
+  - type: textarea
+    id: que
+    attributes:
+      label: Qué querés que haga
+      description: Describilo desde el uso, no desde la implementación.
+      placeholder: |
+        Poder filtrar los pagos SINPE por rango de fechas personalizado,
+        no solo Hoy / Ayer / Semana / Mes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: porque
+    attributes:
+      label: Por qué hace falta
+      description: Qué problema real resuelve. Esto es lo que define la prioridad.
+      placeholder: |
+        Para cerrar la conciliación mensual hay que revisar rangos que no
+        coinciden con los filtros actuales, y hoy toca exportar todo y filtrar en Excel.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: urgencia
+    attributes:
+      label: Urgencia
+      options:
+        - Bloquea trabajo diario
+        - Molesta pero hay forma de rodearlo
+        - Mejora, sin apuro
+    validations:
+      required: true
+
+  - type: textarea
+    id: notas
+    attributes:
+      label: Notas adicionales
+      description: Ideas de cómo hacerlo, referencias, capturas, casos borde a considerar.

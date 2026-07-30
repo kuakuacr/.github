@@ -1,0 +1,37 @@
+# Secretos — nunca en el repositorio (los *.enc.env cifrados sí se versionan)
+*.env
+!*.enc.env
+!.env.example
+*.key
+key.txt
+age-key*.txt
+Secrets.txt
+passwords.txt
+CloudflareToken.txt
+
+# Handoffs locales con credenciales en claro
+*HANDOFF*.md
+*handoff*.md
+
+# Bases de datos y respaldos
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.dump
+*.bak
+*.bak.*
+
+# Dependencias y build
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+
+# Sistema operativo y editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
