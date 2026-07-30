@@ -141,8 +141,10 @@ paths = [
 ]
 
 regexes = [
-  '''ENC\[AES256_GCM''',        # marcador de valor cifrado por SOPS
+  '''ENC\[AES256_GCM''',            # marcador de valor cifrado por SOPS
   '''(?i)(example|sample|dummy|placeholder|changeme|tu[_-]?token|your[_-]?token)''',
-  '''\$\{[A-Z_][A-Z0-9_]*\}''', # referencias a variables: ${POSTGRES_PASSWORD}
-  '''<[A-Z_]{3,}>''',           # marcadores tipo <TOKEN_AQUI>
+  '''\$\{[A-Z_][A-Z0-9_]*\}''',     # referencias a variables: ${POSTGRES_PASSWORD}
+  '''<[A-Z_]{3,}>''',               # marcadores tipo <TOKEN_AQUI>
+  '''__[A-Z][A-Z0-9_]{2,}__''',     # marcadores tipo __ODOO_DB_PASSWORD__
+  '''(?i)REEMPLAZAR[_A-Z0-9]*''',   # marcadores en español de las plantillas
 ]
