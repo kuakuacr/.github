@@ -41,6 +41,23 @@ feat/<slug> ──PR──► test ──PR──► main
 - No se hace force-push a `main` ni a `test`.
 - Las ramas de trabajo se borran al mergear.
 
+### Después de promover `test` → `main`: sincronizar de vuelta
+
+El merge con squash crea en `main` un commit **distinto** al de `test`, aunque el
+contenido sea idéntico. Las dos ramas quedan divergentes, y la siguiente rama que
+salga de `main` va a entrar en conflicto contra `test` sin razón aparente.
+
+Por eso, inmediatamente después de mergear `test` en `main`:
+
+```bash
+git switch test
+git merge --no-edit origin/main    # sin conflicto: el contenido ya es el mismo
+git push origin test
+```
+
+Sin este paso la divergencia se acumula en cada ciclo y los conflictos se vuelven
+cada vez más difíciles de leer.
+
 ### Guardrails — quién los hace cumplir
 
 `kuakuacr` es una **cuenta personal en plan Free**, donde GitHub *no* ofrece protección
