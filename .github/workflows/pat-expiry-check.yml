@@ -37,12 +37,23 @@ jobs:
             exit 0
           fi
 
-          # -i incluye las cabeceras de respuesta; ahí viene la expiración.
-          RESP=$(gh api -i user 2>&1) || {
+          # Se consulta el propio repositorio, NO /user.
+          #
+          # Un PAT de alcance fino con solo permisos de repositorio no puede
+          # llamar a GET /user: ese endpoint exige algún permiso de cuenta
+          # (Profile, Plan, Email addresses…) que este token deliberadamente no
+          # tiene. Usarlo daba 403 y hacía parecer inválido un token sano.
+          # Cualquier request autenticado devuelve la cabecera de expiración,
+          # así que alcanza con leer el repo — solo requiere Metadata, que es
+          # automático.
+          if ! RESP=$(gh api -i "repos/${GITHUB_REPOSITORY}" 2>&1); then
             echo "estado=invalido" >> "$GITHUB_OUTPUT"
-            echo "detalle=El token fue rechazado por la API de GitHub (revocado, expirado o sin permisos)." >> "$GITHUB_OUTPUT"
+            # El mensaje de gh no contiene el token; es seguro mostrarlo.
+            MSG=$(printf '%s' "$RESP" | head -1 | tr -d '\r')
+            echo "detalle=El token fue rechazado por la API de GitHub: ${MSG}" >> "$GITHUB_OUTPUT"
+            echo "::warning::respuesta de la API: ${MSG}"
             exit 0
-          }
+          fi
 
           EXP=$(printf '%s' "$RESP" \
             | grep -i '^github-authentication-token-expiration:' \
@@ -107,13 +118,17 @@ jobs:
           EOF
           )
 
-          EXISTENTE=$(gh issue list --state open --search "$TITULO in:title" \
-            --json number --jq '.[0].number // empty')
+          # --repo explícito: este job no hace checkout, así que gh no puede
+          # inferir el repositorio desde el directorio de trabajo.
+          REPO="${GITHUB_REPOSITORY}"
+
+          EXISTENTE=$(gh issue list --repo "$REPO" --state open \
+            --search "$TITULO in:title" --json number --jq '.[0].number // empty')
 
           if [ -n "$EXISTENTE" ]; then
-            gh issue comment "$EXISTENTE" --body "$CUERPO"
+            gh issue comment "$EXISTENTE" --repo "$REPO" --body "$CUERPO"
             echo "✓ comentario agregado al issue #$EXISTENTE"
           else
-            gh issue create --title "$TITULO" --body "$CUERPO"
+            gh issue create --repo "$REPO" --title "$TITULO" --body "$CUERPO"
             echo "✓ issue creado"
           fi
