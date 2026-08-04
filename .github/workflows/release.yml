@@ -51,7 +51,26 @@ jobs:
             echo "::error::Sin él el release se publica pero el deploy nunca se dispara (ver comentario al inicio de release.yml)."
             exit 1
           fi
-          echo "✓ RELEASE_BOT_PAT presente"
+
+          # Un salto de línea dentro del valor rompe la cabecera Authorization
+          # con "invalid header field value" — un error que no menciona por
+          # ningún lado que el problema es un carácter invisible.
+          # Pasa al guardar el secreto con `$PAT | gh secret set` en PowerShell:
+          # el pipe agrega CRLF. En bash, `printf '%s'` no agrega nada.
+          if printf '%s' "$PAT" | grep -q '[[:cntrl:]]'; then
+            echo "::error::RELEASE_BOT_PAT contiene un carácter de control (salto de línea o retorno de carro)."
+            echo "::error::La API de GitHub lo rechaza con 'invalid header field value for Authorization'."
+            echo "::error::Volvé a guardarlo sin el salto final:  printf '%s' \"\$PAT\" | gh secret set RELEASE_BOT_PAT --repo <repo>"
+            exit 1
+          fi
+
+          LARGO=$(printf '%s' "$PAT" | wc -c)
+          if [ "$LARGO" -lt 20 ]; then
+            echo "::error::RELEASE_BOT_PAT parece truncado (${LARGO} caracteres)."
+            exit 1
+          fi
+
+          echo "✓ RELEASE_BOT_PAT presente, sin caracteres de control, ${LARGO} caracteres"
 
       - id: rp
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
