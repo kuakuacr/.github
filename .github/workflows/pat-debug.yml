@@ -1,0 +1,66 @@
+name: Diagnóstico temporal del PAT
+
+# TEMPORAL — borrar cuando RELEASE_BOT_PAT quede funcionando.
+#
+# Reporta la FORMA del secreto, nunca su valor: longitud, prefijo de tipo,
+# y los bytes exactos del principio y del final. Con eso alcanza para
+# distinguir entre un salto de línea pegado, un token truncado y un valor
+# que directamente no es un PAT.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Forma del secreto
+        env:
+          PAT: ${{ secrets.RELEASE_BOT_PAT }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${PAT:-}" ]; then
+            echo "::error::el secreto está vacío"; exit 1
+          fi
+
+          LARGO=$(printf '%s' "$PAT" | wc -c)
+          echo "longitud: $LARGO bytes"
+
+          # Prefijo de tipo: identifica el formato, no es secreto.
+          case "$PAT" in
+            github_pat_*) echo "tipo: fine-grained (github_pat_)" ;;
+            ghp_*)        echo "tipo: classic (ghp_)" ;;
+            gho_*)        echo "tipo: OAuth (gho_)" ;;
+            *)            echo "tipo: DESCONOCIDO — no empieza con github_pat_ ni ghp_" ;;
+          esac
+
+          # ¿Solo caracteres válidos para un token?
+          if printf '%s' "$PAT" | grep -qE '^[A-Za-z0-9_]+$'; then
+            echo "formato: solo [A-Za-z0-9_] — correcto"
+          else
+            echo "formato: CONTIENE caracteres fuera de [A-Za-z0-9_]"
+          fi
+
+          # Bytes exactos de los extremos, en hexadecimal.
+          # 0d = retorno de carro, 0a = salto de línea, 20 = espacio.
+          echo "primeros 4 bytes (hex): $(printf '%s' "$PAT" | head -c4 | od -An -tx1 | tr -s ' ')"
+          echo "últimos 4 bytes  (hex): $(printf '%s' "$PAT" | tail -c4 | od -An -tx1 | tr -s ' ')"
+
+          N_CTRL=$(printf '%s' "$PAT" | tr -cd '[:cntrl:]' | wc -c)
+          N_ESP=$(printf '%s' "$PAT" | tr -cd ' ' | wc -c)
+          echo "caracteres de control: $N_CTRL"
+          echo "espacios: $N_ESP"
+
+          echo "---"
+          if [ "$N_CTRL" -gt 0 ] || [ "$N_ESP" -gt 0 ]; then
+            echo "DIAGNÓSTICO: el valor tiene espacios o saltos de línea adentro."
+          elif [ "$LARGO" -lt 40 ]; then
+            echo "DIAGNÓSTICO: el valor es demasiado corto — probablemente truncado."
+          else
+            echo "DIAGNÓSTICO: la forma es correcta. Si la API igual lo rechaza,"
+            echo "el token fue revocado o le faltan permisos."
+          fi
