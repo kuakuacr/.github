@@ -3,9 +3,17 @@ name: Deploy (Tailscale)
 # Workflow reutilizable de despliegue a los VPS de Kua'kua a través de la tailnet.
 #
 # El runner efímero de GitHub se une a la tailnet con tag:ci, sincroniza archivos
-# por rsync sobre Tailscale SSH, ejecuta un comando remoto opcional, y se destruye.
-# No se almacena ninguna llave SSH privada en GitHub: la autenticación la resuelve
-# Tailscale SSH contra la ACL (tag:ci -> tag:prod, usuario kuakua).
+# por rsync, ejecuta un comando remoto opcional, y se destruye.
+#
+# Autenticación: una llave SSH dedicada (secreto SSH_DEPLOY_KEY), no Tailscale SSH.
+# Se eligió así porque habilitar Tailscale SSH en los servidores obligaba a
+# etiquetarlos —lo que re-registra el nodo y lo saca de la tailnet unos segundos—
+# y a reescribir la regla `ssh` de la ACL. Con `ops` sin acceso público, esa
+# ventana era un riesgo real sobre producción que funciona.
+#
+# La llave publica esta instalada en ambos servidores con la restriccion
+# `from="100.64.0.0/10"`: solo sirve desde dentro de la tailnet. Aunque la llave
+# privada se filtrara de GitHub, no es utilizable desde internet. Verificado.
 #
 # Uso desde un repo:
 #   jobs:
@@ -123,6 +131,26 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
+      - name: Preparar la llave SSH de despliegue
+        env:
+          SSH_DEPLOY_KEY: ${{ secrets.SSH_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_DEPLOY_KEY:-}" ]; then
+            echo "::error::Falta el secreto SSH_DEPLOY_KEY en este repositorio."
+            exit 1
+          fi
+          umask 077
+          printf '%s\n' "$SSH_DEPLOY_KEY" > "$RUNNER_TEMP/deploy_key"
+          chmod 600 "$RUNNER_TEMP/deploy_key"
+          # Un salto de linea de mas rompe la llave con un error que no lo menciona.
+          if ! ssh-keygen -y -f "$RUNNER_TEMP/deploy_key" >/dev/null 2>&1; then
+            echo "::error::SSH_DEPLOY_KEY no es una llave privada valida."
+            echo "::error::Suele ser un salto de linea o espacio de mas al guardarla."
+            exit 1
+          fi
+          echo "✓ llave de despliegue lista"
+
       - name: Sincronizar archivos
         env:
           DRY_RUN: ${{ inputs.dry_run }}
@@ -130,7 +158,7 @@ jobs:
           DEST: ${{ inputs.ssh_user }}@${{ inputs.host }}:${{ inputs.remote_path }}
         run: |
           set -euo pipefail
-          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          SSH_OPTS="-i $RUNNER_TEMP/deploy_key -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
           RSYNC_ARGS=(-az --itemize-changes --human-readable)
           if [ "$DRY_RUN" = "true" ]; then RSYNC_ARGS+=(--dry-run); fi
           rsync "${RSYNC_ARGS[@]}" -e "ssh $SSH_OPTS" "$SRC" "$DEST"
@@ -142,7 +170,7 @@ jobs:
           REMOTE_SECRETS: ${{ inputs.secrets_remote_path }}
         run: |
           set -euo pipefail
-          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          SSH_OPTS="-i $RUNNER_TEMP/deploy_key -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
           # shellcheck disable=SC2086
           scp $SSH_OPTS "$RUNNER_TEMP/decrypted.env" "$TARGET:$REMOTE_SECRETS"
           # shellcheck disable=SC2086
@@ -155,7 +183,7 @@ jobs:
           POST_DEPLOY: ${{ inputs.post_deploy }}
         run: |
           set -euo pipefail
-          SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          SSH_OPTS="-i $RUNNER_TEMP/deploy_key -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
           # El comando viaja por stdin: nunca se interpola en la línea de comandos del runner.
           # shellcheck disable=SC2086
           printf '%s\n' "$POST_DEPLOY" | ssh $SSH_OPTS "$TARGET" 'bash -s'
@@ -164,7 +192,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          for f in "$RUNNER_TEMP/age/key.txt" "$RUNNER_TEMP/decrypted.env"; do
+          for f in "$RUNNER_TEMP/age/key.txt" "$RUNNER_TEMP/decrypted.env" "$RUNNER_TEMP/deploy_key"; do
             [ -f "$f" ] && shred -u "$f" 2>/dev/null || true
           done
           echo "✓ limpieza completa"
