@@ -121,6 +121,12 @@ jobs:
           CHECKS: ${{ steps.rev.outputs.checks }}
         run: |
           set -uo pipefail
+          # El JSON se arma con jq, no con interpolacion de shell.
+          #
+          # Es la regla de UTF-8 del proyecto: los acentos y emojis se corrompen
+          # al construir el JSON a mano desde un shell con otra codificacion.
+          # Este job corre en Linux, asi que no aplica — pero armar el JSON con
+          # jq hace que siga siendo correcto si alguien lo copia a otro lado.
           TEXTO="⚠️ *${REPO}* — el PR #${PR} se mergeó a main con checks en rojo: ${CHECKS}
           https://github.com/${REPO}/pull/${PR}"
 
