@@ -104,9 +104,26 @@ chore: actualizar pin de la acción de checkout
 
 | Nivel | Qué es | Disparo |
 |---|---|---|
-| 🟢 Automático | Sitios estáticos, bot de Slack, frontend en Vercel | Merge a `main` |
+| 🟢 Automático | Sitios estáticos, bot de Slack, frontend en Vercel | **Publicación de un release** (tag `vX.Y.Z`) |
 | 🟡 Con aprobación | Cambios de compose, imágenes, Odoo, CMS | Click manual en `workflow_dispatch` |
 | 🔴 Manual | Workflows de n8n | Procedimiento documentado, a mano |
+
+### Por qué el disparo es el release y no el merge a `main`
+
+```
+PR → test → main → release-please abre PR de release → merge → tag → deploy
+```
+
+Cada despliegue queda atado a una versión con nombre y a su entrada en el
+`CHANGELOG`. Revertir es `-f ref=v1.2.0` contra algo que existe de verdad, en
+lugar de contra un SHA suelto.
+
+Un merge a `main` **no despliega por sí solo**. Para desplegar sin publicar
+versión está el disparo manual.
+
+⚠️ Esto depende de que `release-please` corra con **`RELEASE_BOT_PAT`**. Con el
+`GITHUB_TOKEN` por defecto, el tag no dispararía el workflow de despliegue y
+nada se desplegaría — en silencio.
 
 El nivel de cada repo se declara en su `README.md` y en
 `kuakua-infra/docs/registry.md`.
