@@ -147,4 +147,10 @@ regexes = [
   '''<[A-Z_]{3,}>''',               # marcadores tipo <TOKEN_AQUI>
   '''__[A-Z][A-Z0-9_]{2,}__''',     # marcadores tipo __ODOO_DB_PASSWORD__
   '''(?i)REEMPLAZAR[_A-Z0-9]*''',   # marcadores en español de las plantillas
+
+  # Propiedades JSON que se LLAMAN "key" pero cuyo valor es un identificador,
+  # no un secreto. Ej: {"key": "interacciones_12m"} en las definiciones de
+  # atributos de Chatwoot. La regla generic-api-key se dispara por el nombre
+  # de la propiedad, no por el contenido.
+  '''"key"\s*:\s*"[a-z][a-z0-9_]{2,40}"''',
 ]
