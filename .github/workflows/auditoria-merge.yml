@@ -1,0 +1,148 @@
+name: Auditoría de merge
+
+# Detecta merges a main cuyo PR tenia checks en rojo.
+#
+# No lo previene: sin proteccion de rama —que en plan Free no existe para repos
+# privados— nada del lado del servidor puede impedir un merge. Lo que hace es
+# volverlo IMPOSIBLE DE NO NOTAR, que es lo que fallo el 2026-08-05: un script
+# mergeo con gitleaks en rojo y se descubrio de casualidad horas despues.
+#
+# Uso desde un repo:
+#   jobs:
+#     auditoria:
+#       uses: kuakuacr/.github/.github/workflows/auditoria-merge.yml@main
+#       secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      slack_channel:
+        description: "ID del canal de Slack (no el nombre: los privados fallan por nombre)"
+        type: string
+        default: "C0BN27QLTRU"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  auditar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Revisar el PR asociado al commit
+        id: rev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+
+          # El PR que trajo este commit a main.
+          PR=$(gh api "repos/${REPO}/commits/${SHA}/pulls" \
+                 -H "Accept: application/vnd.github.groot-preview+json" \
+                 --jq '.[0].number // empty' 2>/dev/null)
+
+          if [ -z "$PR" ]; then
+            echo "  commit sin PR asociado (push directo o merge de release)"
+            echo "estado=sin_pr" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "  PR asociado: #$PR"
+
+          # Los checks del ULTIMO commit del PR, que es lo que se mergeo.
+          ULTIMO=$(gh api "repos/${REPO}/pulls/${PR}/commits" --jq '.[-1].sha' 2>/dev/null)
+          [ -z "$ULTIMO" ] && ULTIMO="$SHA"
+
+          ROJOS=$(gh api "repos/${REPO}/commits/${ULTIMO}/check-runs" \
+                    --jq '[.check_runs[] | select(.conclusion=="failure" or .conclusion=="timed_out"
+                                                  or .conclusion=="cancelled")
+                          | .name] | join(", ")' 2>/dev/null)
+
+          if [ -n "$ROJOS" ]; then
+            echo "::error::El PR #${PR} se mergeó con checks en rojo: ${ROJOS}"
+            {
+              echo "estado=rojo"
+              echo "pr=$PR"
+              echo "checks=$ROJOS"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "  ✓ el PR #$PR tenía todos los checks en verde"
+            echo "estado=verde" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Abrir issue
+        if: steps.rev.outputs.estado == 'rojo'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.rev.outputs.pr }}
+          CHECKS: ${{ steps.rev.outputs.checks }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh issue create --repo "$REPO" \
+            --title "⚠️ PR #${PR} se mergeó con checks en rojo" \
+            --body "$(cat <<EOF
+          El commit \`${SHA}\` llegó a \`main\` desde el PR #${PR}, que tenía checks fallando.
+
+          **Checks en rojo:** ${CHECKS}
+
+          ### Qué revisar
+
+          1. ¿El fallo era real o un falso positivo?
+          2. Si era real: ¿qué llegó a \`main\`, y hay que revertirlo?
+          3. Si era falso positivo: **arreglar la regla**, no ignorarla. Una regla que
+             da falsos positivos se termina ignorando cuando reporte algo real.
+
+          ### Por qué pasó
+
+          En plan Free no hay protección de rama en repositorios privados, así que
+          GitHub acepta el merge aunque CI esté en rojo. Nada del lado del servidor
+          lo impide.
+
+          Para mergear desde script, usar \`kuakua-infra/scripts/merge-seguro.sh\`,
+          que verifica los checks antes.
+
+          ---
+          _Generado por \`auditoria-merge.yml\`._
+          EOF
+          )"
+
+      - name: Avisar a Slack y Pumble
+        if: steps.rev.outputs.estado == 'rojo'
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          PUMBLE_WEBHOOK_DEPLOYMENT: ${{ secrets.PUMBLE_WEBHOOK_DEPLOYMENT }}
+          CANAL: ${{ inputs.slack_channel }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.rev.outputs.pr }}
+          CHECKS: ${{ steps.rev.outputs.checks }}
+        run: |
+          set -uo pipefail
+          TEXTO="⚠️ *${REPO}* — el PR #${PR} se mergeó a main con checks en rojo: ${CHECKS}
+          https://github.com/${REPO}/pull/${PR}"
+
+          if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
+            # Canal por ID, no por nombre: en canales privados el nombre da
+            # channel_not_found aunque el bot esté invitado.
+            R=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
+                  -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+                  -H 'Content-Type: application/json; charset=utf-8' \
+                  -d "$(jq -n --arg c "$CANAL" --arg t "$TEXTO" '{channel:$c, text:$t}')" 2>&1)
+            echo "  slack: $(printf '%s' "$R" | jq -r '.ok // .error // "sin respuesta"')"
+          else
+            echo "::warning::falta SLACK_BOT_TOKEN; no se avisó a Slack"
+          fi
+
+          if [ -n "${PUMBLE_WEBHOOK_DEPLOYMENT:-}" ]; then
+            # Pumble responde texto plano "ok", no JSON: un error de parseo
+            # JSON en la respuesta es normal, no significa que falló.
+            curl -sS -X POST "$PUMBLE_WEBHOOK_DEPLOYMENT" \
+              -H 'Content-Type: application/json' \
+              -d "$(jq -n --arg t "$TEXTO" '{text:$t}')" >/dev/null 2>&1 \
+              && echo "  pumble: enviado" || echo "  pumble: falló"
+          else
+            echo "::warning::falta PUMBLE_WEBHOOK_DEPLOYMENT; no se avisó a Pumble"
+          fi
