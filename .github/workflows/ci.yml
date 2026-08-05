@@ -71,8 +71,13 @@ jobs:
           # de crear los repos, y el efecto fue que CI marcó como secreto un
           # marcador __PLACEHOLDER__ que la versión nueva ya permitía.
           # CI siempre usa la fuente de verdad; la copia local es solo para hooks.
+          # El parametro ?v= evita el cache del CDN de raw.githubusercontent,
+          # que sirve el archivo hasta ~5 minutos desactualizado. Sin esto, un
+          # arreglo en la config canonica no surte efecto de inmediato: CI
+          # sigue fallando con la version vieja y no hay forma de saber cuando
+          # dejara de hacerlo salvo reintentar a ciegas. Ya paso una vez.
           if curl -sSfL -o /tmp/gitleaks-canon.toml \
-               https://raw.githubusercontent.com/kuakuacr/.github/main/.gitleaks.toml; then
+               "https://raw.githubusercontent.com/kuakuacr/.github/main/.gitleaks.toml?v=${GITHUB_RUN_ID}"; then
             echo "CONFIG=/tmp/gitleaks-canon.toml" >> "$GITHUB_ENV"
             echo "usando configuración canónica de kuakuacr/.github"
           elif [ -f .gitleaks.toml ]; then
