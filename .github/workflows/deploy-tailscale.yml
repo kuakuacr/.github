@@ -104,9 +104,15 @@ jobs:
         if: inputs.secrets_file != ''
         run: |
           set -euo pipefail
-          SOPS_VERSION=3.12.0
-          curl -sSfL -o /tmp/sops \
-            "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          # Version fijada: una version flotante convierte un despliegue en algo
+          # que depende de que sops no cambie nada hoy.
+          SOPS_VERSION=3.13.3
+          URL="https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          if ! curl -sSfL -o /tmp/sops "$URL"; then
+            echo "::error::no se pudo descargar sops v${SOPS_VERSION}"
+            echo "::error::verificar que la version exista: https://github.com/getsops/sops/releases"
+            exit 1
+          fi
           sudo install -m 0755 /tmp/sops /usr/local/bin/sops
           sops --version
 
