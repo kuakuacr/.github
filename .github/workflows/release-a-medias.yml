@@ -33,13 +33,19 @@ name: Release a medias
 #
 #   on:
 #     schedule:
-#       - cron: "0 14 * * *"     # 8:00 en Costa Rica (UTC-6, sin horario de verano)
+#       - cron: "23 14 * * *"    # 8:23 en Costa Rica (UTC-6, sin horario de verano)
 #     workflow_dispatch:
+#
+#   permissions:
+#     contents: read
 #
 #   jobs:
 #     release_a_medias:
 #       uses: kuakuacr/.github/.github/workflows/release-a-medias.yml@main
 #       secrets: inherit
+#
+# El minuto 23 y no 00: GitHub retrasa los crons que caen en punto, que es
+# cuando todo el mundo agenda.
 
 on:
   workflow_call:
@@ -58,8 +64,9 @@ on:
         default: "C0BN27QLTRU"
 
 permissions:
+  # Solo lectura. Este workflow no crea issues: avisa por Slack y Pumble.
+  # `contents: read` alcanza para leer los tags y consultar el release.
   contents: read
-  issues: write
 
 jobs:
   verificar:
