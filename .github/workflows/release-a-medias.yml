@@ -1,0 +1,251 @@
+name: Release a medias
+
+# Detecta el estado en que `version.txt` dice una version que NUNCA se etiqueto.
+#
+# ── Por que existe ──────────────────────────────────────────────────────────
+#
+# release-please hace su trabajo en dos tiempos: primero abre un PR que escribe
+# `version.txt` y el CHANGELOG, y despues —al mergearse ese PR— crea el tag y el
+# release. Si el workflow `Release` falla entre medio, queda un repositorio que
+# afirma estar en la version X sin que exista el tag vX.
+#
+# Eso es peor que un fallo visible, por dos razones:
+#
+#   1. En los repos 🟢 (`kuakua-web`, `kuakua-slack-bot`) el despliegue se
+#      dispara con el TAG. Sin tag no hubo despliegue — pero el repositorio,
+#      el CHANGELOG y el numero de version dicen que si.
+#   2. Revertir es `-f ref=vX.Y.Z` contra un tag que existe. Si el tag nunca se
+#      creo, la via de escape tampoco esta.
+#
+# Paso de verdad: el 2026-08-06, durante la caida de GitHub Actions (incidente
+# qcvjkzcs7j74), `kuakua-n8n` mergeo el PR de release 0.4.0. `version.txt` quedo
+# en 0.4.0 y el CHANGELOG con su entrada, pero el workflow `Release` murio
+# esperando runner y `v0.4.0` no se creo nunca. Se descubrio de casualidad.
+#
+# ── Por que agendado y no dentro de release.yml ─────────────────────────────
+#
+# Un paso dentro de `release.yml` no puede detectar que `release.yml` no llego a
+# correr. Esto comprueba el ESTADO, no el resultado de un job — asi que tambien
+# atrapa un tag borrado a mano, un `version.txt` editado sin release, o un
+# workflow que reporto exito sin hacer su trabajo.
+#
+# ── Uso desde un repo ───────────────────────────────────────────────────────
+#
+#   on:
+#     schedule:
+#       - cron: "0 14 * * *"     # 8:00 en Costa Rica (UTC-6, sin horario de verano)
+#     workflow_dispatch:
+#
+#   jobs:
+#     release_a_medias:
+#       uses: kuakuacr/.github/.github/workflows/release-a-medias.yml@main
+#       secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      archivo_version:
+        description: "Archivo que contiene la version desnuda, sin la v"
+        type: string
+        default: "version.txt"
+      gracia_minutos:
+        description: "Cuanto esperar antes de gritar: un release en curso es normal"
+        type: number
+        default: 30
+      slack_channel:
+        description: "ID del canal de Slack (no el nombre: los privados fallan por nombre)"
+        type: string
+        default: "C0BN27QLTRU"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Hace falta el historial completo para saber CUANDO se escribio la
+          # version, y los tags para saber si el que corresponde existe.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Comparar la versión declarada contra el tag
+        id: rev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ARCHIVO: ${{ inputs.archivo_version }}
+          GRACIA: ${{ inputs.gracia_minutos }}
+        run: |
+          set -uo pipefail
+
+          # Sin `2>/dev/null` a secas sobre asignaciones. Actions corre esto con
+          # `bash -e`, donde `X=$(cmd-que-falla 2>/dev/null)` mata el job al
+          # instante y sin imprimir NADA. Fue exactamente lo que dejo a
+          # `auditoria-merge.yml` sin funcionar 14 corridas seguidas.
+
+          if [ ! -f "$ARCHIVO" ]; then
+            echo "  este repo no tiene ${ARCHIVO} — nada que verificar"
+            echo "estado=sin_archivo" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          VERSION=$(tr -d ' \t\r\n' < "$ARCHIVO")
+          if [ -z "$VERSION" ]; then
+            echo "::warning::${ARCHIVO} está vacío"
+            echo "estado=sin_archivo" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TAG="v${VERSION}"
+          echo "  ${ARCHIVO} declara ${VERSION} → se espera el tag ${TAG}"
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "  ✓ el tag ${TAG} existe"
+
+            # El tag esta pero el release publicado puede faltar. Es un estado
+            # menos grave —el despliegue se dispara con el tag— pero sigue
+            # siendo un release a medias.
+            if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+              echo "  ✓ el release ${TAG} está publicado"
+              echo "estado=ok" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning::existe el tag ${TAG} pero no el release publicado"
+              {
+                echo "estado=sin_release"
+                echo "version=$VERSION"
+                echo "tag=$TAG"
+              } >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          # No hay tag. Antes de gritar: ¿este repo llegó a publicar alguna vez?
+          #
+          # Un repositorio recién creado tiene `version.txt` en 0.1.0 como
+          # marcador inicial, sin ningún tag y sin release — y eso NO es un
+          # release a medias, es un repo que todavía no publicó nada.
+          # `kuakua-brand` estaba exactamente así, y la primera version de este
+          # detector lo marcaba en rojo.
+          #
+          # El discriminador es el CHANGELOG: release-please escribe la versión y
+          # su entrada en el mismo PR. Version sin entrada = nunca se publicó.
+          # Version CON entrada y sin tag = el release quedó a medias.
+          #
+          # Se prefiere esto a «¿tiene algún tag previo?» porque esa alternativa
+          # sería ciega justo al caso peor: que el primer release de un repo sea
+          # el que falla.
+          if [ -f CHANGELOG.md ]; then
+            VRE=${VERSION//./\\.}
+            if ! grep -qE "^#+ +\[?${VRE}\]?" CHANGELOG.md; then
+              echo "  ${ARCHIVO} declara ${VERSION}, pero el CHANGELOG no tiene esa entrada."
+              echo "  Es un repo que aún no publicó su primera versión, no un release a medias."
+              echo "estado=nunca_publicado" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          # ¿Hace cuánto se escribió esa versión?
+          #
+          # Un release recién mergeado legítimamente no tiene tag por un minuto
+          # o dos. Sin este período de gracia, el guardia daría un falso
+          # positivo en cada release — y una regla que grita en falso se termina
+          # ignorando cuando reporte algo real.
+          CUANDO=$(git log -1 --format=%ct -- "$ARCHIVO") || CUANDO=""
+          [ -n "$CUANDO" ] || CUANDO=0
+          EDAD=$(( ( $(date +%s) - CUANDO ) / 60 ))
+
+          if [ "$EDAD" -lt "$GRACIA" ]; then
+            echo "  ${TAG} aún no existe, pero ${ARCHIVO} se escribió hace ${EDAD} min"
+            echo "  (gracia: ${GRACIA} min) — un release en curso se ve así"
+            echo "estado=en_curso" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::error::${ARCHIVO} dice ${VERSION} pero el tag ${TAG} no existe, y ya pasaron ${EDAD} min"
+          {
+            echo "estado=sin_tag"
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "edad=$EDAD"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Avisar a Slack y Pumble
+        if: steps.rev.outputs.estado == 'sin_tag' || steps.rev.outputs.estado == 'sin_release'
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          PUMBLE_WEBHOOK_DEPLOYMENT: ${{ secrets.PUMBLE_WEBHOOK_DEPLOYMENT }}
+          CANAL: ${{ inputs.slack_channel }}
+          REPO: ${{ github.repository }}
+          ESTADO: ${{ steps.rev.outputs.estado }}
+          VERSION: ${{ steps.rev.outputs.version }}
+          TAG: ${{ steps.rev.outputs.tag }}
+        run: |
+          set -uo pipefail
+
+          if [ "$ESTADO" = "sin_tag" ]; then
+            TEXTO="🏷️ *${REPO}* — release a medias: el repo dice estar en *${VERSION}* pero el tag \`${TAG}\` NO EXISTE.
+          En los repos que despliegan con el tag, eso significa que esa versión nunca se desplegó — aunque el CHANGELOG diga que sí.
+          Arreglo: re-lanzar el workflow \`Release\` en main.
+          https://github.com/${REPO}/actions/workflows/release.yml"
+          else
+            TEXTO="🏷️ *${REPO}* — existe el tag \`${TAG}\` pero no el release publicado. El despliegue no se ve afectado; falta la entrada visible.
+          https://github.com/${REPO}/releases"
+          fi
+
+          # El JSON se arma con jq, no interpolando en el shell: es la regla de
+          # UTF-8 del proyecto, y mantiene esto correcto si alguien lo copia a
+          # una maquina con otra codificacion.
+          if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
+            R=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
+                  -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+                  -H 'Content-Type: application/json; charset=utf-8' \
+                  -d "$(jq -n --arg c "$CANAL" --arg t "$TEXTO" '{channel:$c, text:$t}')" 2>&1)
+            echo "  slack: $(printf '%s' "$R" | jq -r '.ok // .error // "sin respuesta"')"
+          else
+            echo "::warning::falta SLACK_BOT_TOKEN; no se avisó a Slack"
+          fi
+
+          if [ -n "${PUMBLE_WEBHOOK_DEPLOYMENT:-}" ]; then
+            curl -sS -X POST "$PUMBLE_WEBHOOK_DEPLOYMENT" \
+              -H 'Content-Type: application/json' \
+              -d "$(jq -n --arg t "$TEXTO" '{text:$t}')" >/dev/null 2>&1 \
+              && echo "  pumble: enviado" || echo "  pumble: falló"
+          else
+            echo "::warning::falta PUMBLE_WEBHOOK_DEPLOYMENT; no se avisó a Pumble"
+          fi
+
+      # Misma leccion que en auditoria-merge.yml: un guardia que se cae sin
+      # avisar es indistinguible de un guardia que no existe. Este workflow corre
+      # agendado, o sea que nadie esta mirando cuando corre — con mas razon tiene
+      # que gritar si se rompe.
+      - name: El detector se rompió — avisar
+        if: failure()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          PUMBLE_WEBHOOK_DEPLOYMENT: ${{ secrets.PUMBLE_WEBHOOK_DEPLOYMENT }}
+          CANAL: ${{ inputs.slack_channel }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          TEXTO="🔧 *${REPO}* — el detector de releases a medias FALLÓ.
+          Nadie está verificando que la versión declarada tenga su tag hasta que se arregle.
+          https://github.com/${REPO}/actions/runs/${RUN}"
+
+          if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
+            R=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
+                  -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+                  -H 'Content-Type: application/json; charset=utf-8' \
+                  -d "$(jq -n --arg c "$CANAL" --arg t "$TEXTO" '{channel:$c, text:$t}')" 2>&1)
+            echo "  slack: $(printf '%s' "$R" | jq -r '.ok // .error // "sin respuesta"')"
+          fi
+
+          if [ -n "${PUMBLE_WEBHOOK_DEPLOYMENT:-}" ]; then
+            curl -sS -X POST "$PUMBLE_WEBHOOK_DEPLOYMENT" \
+              -H 'Content-Type: application/json' \
+              -d "$(jq -n --arg t "$TEXTO" '{text:$t}')" >/dev/null 2>&1 \
+              && echo "  pumble: enviado" || echo "  pumble: falló"
+          fi
