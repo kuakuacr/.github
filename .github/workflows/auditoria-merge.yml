@@ -38,6 +38,15 @@ permissions:
   # Su ausencia es la causa mas probable de que el paso muriera en la primera
   # llamada, antes de imprimir una sola linea.
   pull-requests: read
+  # Y este es el segundo, comprobado el 2026-08-07: con `pull-requests` ya leia
+  # el PR, pero `repos/{repo}/commits/{sha}/check-runs` seguia respondiendo 403.
+  # Leer un PR y leer sus checks son dos permisos distintos, y esta auditoria
+  # existe justamente para leer los checks.
+  #
+  # Ojo: declararlo aca no alcanza. El llamador pone el techo —un workflow
+  # reutilizable no puede pedir mas de lo que le conceden— asi que los tres
+  # repos que lo usan tienen que declararlo tambien.
+  checks: read
 
 jobs:
   auditar:
