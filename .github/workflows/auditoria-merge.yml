@@ -7,6 +7,15 @@ name: Auditoría de merge
 # volverlo IMPOSIBLE DE NO NOTAR, que es lo que fallo el 2026-08-05: un script
 # mergeo con gitleaks en rojo y se descubrio de casualidad horas despues.
 #
+# ⚠️ Este workflow no funciono NUNCA entre el 2026-08-05 y el 2026-08-06:
+#    14 corridas, 14 fallos, en los tres repos que lo usan. El guardia que se
+#    construyo porque un merge malo se colo, no vigilo ni una sola vez — y no
+#    fallo en silencio, fallo en rojo, y nadie miro.
+#
+#    Por eso ahora hay un paso `if: failure()` al final. Un guardia que se cae
+#    tiene que gritar; si solo deja una X roja en la pestaña de Actions, es
+#    indistinguible de no existir.
+#
 # Uso desde un repo:
 #   jobs:
 #     auditoria:
@@ -24,6 +33,11 @@ on:
 permissions:
   contents: read
   issues: write
+  # Sin esto, `repos/{repo}/commits/{sha}/pulls` y `repos/{repo}/pulls/{n}/commits`
+  # responden 403: el GITHUB_TOKEN solo recibe los permisos declarados acá.
+  # Su ausencia es la causa mas probable de que el paso muriera en la primera
+  # llamada, antes de imprimir una sola linea.
+  pull-requests: read
 
 jobs:
   auditar:
@@ -38,10 +52,25 @@ jobs:
         run: |
           set -uo pipefail
 
-          # El PR que trajo este commit a main.
-          PR=$(gh api "repos/${REPO}/commits/${SHA}/pulls" \
-                 -H "Accept: application/vnd.github.groot-preview+json" \
-                 --jq '.[0].number // empty' 2>/dev/null)
+          # Nada de `2>/dev/null`. Antes, cada `gh api` mandaba su stderr al vacio
+          # y el shell (`bash -e`, el default de Actions) mataba el job con exit 1
+          # y CERO salida. Diagnosticarlo requirio leer el log crudo y contar
+          # milisegundos. Es el mismo antipatron que `docs/RULES.md` describe para
+          # los Code nodes: un try/catch alrededor de una llamada que nunca ocurrio
+          # se ve identico a una llamada exitosa.
+          ERR=$(mktemp)
+
+          fallar() {
+            echo "::error::auditoria-merge: $1"
+            echo "estado=error" >> "$GITHUB_OUTPUT"
+            exit 1
+          }
+
+          # El PR que trajo este commit a main. El endpoint es GA desde hace
+          # tiempo; la cabecera `groot-preview` que llevaba antes correspondia a
+          # una preview ya retirada.
+          PR=$(gh api "repos/${REPO}/commits/${SHA}/pulls" --jq '.[0].number // empty' 2>"$ERR") \
+            || fallar "no se pudo listar el PR del commit ${SHA}: $(tr '\n' ' ' <"$ERR")"
 
           if [ -z "$PR" ]; then
             echo "  commit sin PR asociado (push directo o merge de release)"
@@ -52,13 +81,29 @@ jobs:
           echo "  PR asociado: #$PR"
 
           # Los checks del ULTIMO commit del PR, que es lo que se mergeo.
-          ULTIMO=$(gh api "repos/${REPO}/pulls/${PR}/commits" --jq '.[-1].sha' 2>/dev/null)
-          [ -z "$ULTIMO" ] && ULTIMO="$SHA"
+          ULTIMO=$(gh api "repos/${REPO}/pulls/${PR}/commits" --jq '.[-1].sha' 2>"$ERR") \
+            || fallar "no se pudieron listar los commits del PR #${PR}: $(tr '\n' ' ' <"$ERR")"
+
+          # `if/then/fi` en vez de `[ -z "$ULTIMO" ] && ULTIMO="$SHA"`.
+          #
+          # Aclaracion, porque es una confusion facil y costo un rato descartarla:
+          # la forma con `&&` NO era un bug. Bajo `bash -e`, una condicion que
+          # falla dentro de una lista `&&` esta EXENTA y no mata el script —
+          # verificado, no deducido. Se cambia solo porque `if/then/fi` dice lo
+          # que hace sin depender de recordar esa exencion.
+          #
+          # Lo que si mata es la linea de arriba: `X=$(cmd 2>/dev/null)` con cmd
+          # fallando termina el script al instante, sin imprimir nada. Esa, y no
+          # esta, era la causa.
+          if [ -z "$ULTIMO" ]; then
+            ULTIMO="$SHA"
+          fi
 
           ROJOS=$(gh api "repos/${REPO}/commits/${ULTIMO}/check-runs" \
                     --jq '[.check_runs[] | select(.conclusion=="failure" or .conclusion=="timed_out"
                                                   or .conclusion=="cancelled")
-                          | .name] | join(", ")' 2>/dev/null)
+                          | .name] | join(", ")' 2>"$ERR") \
+            || fallar "no se pudieron leer los checks de ${ULTIMO}: $(tr '\n' ' ' <"$ERR")"
 
           if [ -n "$ROJOS" ]; then
             echo "::error::El PR #${PR} se mergeó con checks en rojo: ${ROJOS}"
@@ -151,4 +196,43 @@ jobs:
               && echo "  pumble: enviado" || echo "  pumble: falló"
           else
             echo "::warning::falta PUMBLE_WEBHOOK_DEPLOYMENT; no se avisó a Pumble"
+          fi
+
+      # ── Lo que faltaba: que el guardia grite cuando el guardia se cae ────────
+      #
+      # Los tres pasos de arriba solo avisan cuando encuentran un merge rojo. Si
+      # el job MISMO se rompe, no avisaban nada: quedaba una X en la pestaña de
+      # Actions, que es exactamente donde nadie mira. Asi pasaron 14 corridas
+      # fallidas en tres repos sin que nadie lo notara.
+      #
+      # Un guardia silencioso y un guardia ausente son indistinguibles desde
+      # afuera. Esta es la diferencia.
+      - name: La auditoría se rompió — avisar
+        if: failure()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          PUMBLE_WEBHOOK_DEPLOYMENT: ${{ secrets.PUMBLE_WEBHOOK_DEPLOYMENT }}
+          CANAL: ${{ inputs.slack_channel }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          TEXTO="🔧 *${REPO}* — la auditoría de merge FALLÓ y no pudo revisar el commit \`${SHA:0:7}\`.
+          Nadie está vigilando que los merges a main lleguen con los checks en verde hasta que se arregle.
+          https://github.com/${REPO}/actions/runs/${RUN}"
+
+          if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
+            R=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
+                  -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+                  -H 'Content-Type: application/json; charset=utf-8' \
+                  -d "$(jq -n --arg c "$CANAL" --arg t "$TEXTO" '{channel:$c, text:$t}')" 2>&1)
+            echo "  slack: $(printf '%s' "$R" | jq -r '.ok // .error // "sin respuesta"')"
+          fi
+
+          if [ -n "${PUMBLE_WEBHOOK_DEPLOYMENT:-}" ]; then
+            curl -sS -X POST "$PUMBLE_WEBHOOK_DEPLOYMENT" \
+              -H 'Content-Type: application/json' \
+              -d "$(jq -n --arg t "$TEXTO" '{text:$t}')" >/dev/null 2>&1 \
+              && echo "  pumble: enviado" || echo "  pumble: falló"
           fi
