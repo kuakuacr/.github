@@ -158,9 +158,10 @@ regexes = [
 # Caso concreto: {"key": "interacciones_12m"} en las definiciones de atributos
 # de Chatwoot. La regla generic-api-key se dispara por el nombre de la
 # propiedad, no por el contenido, y un identificador se lee como credencial.
+# El punto en la clase admite nombres con familia: "kuakua.tarjetas.auto".
 [[allowlists]]
 description = "Propiedades JSON llamadas literalmente 'key'"
 regexTarget = "line"
 regexes = [
-  '''"key"\s*:\s*"[a-z][a-z0-9_]{2,40}"''',
+  '''"key"\s*:\s*"[a-z][a-z0-9_.]{2,60}"''',
 ]
