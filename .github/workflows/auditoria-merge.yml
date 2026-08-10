@@ -29,6 +29,14 @@ on:
         description: "ID del canal de Slack (no el nombre: los privados fallan por nombre)"
         type: string
         default: "C0BN27QLTRU"
+      runner:
+        description: >
+          Etiqueta del runner. "ubuntu-latest" (default) paga minutos de
+          Actions; "self-hosted" corre en el runner de ops y no consume el
+          plan de minutos. Este job no hace checkout ni instala nada — solo
+          llama a la API de GitHub — así que es seguro en cualquier runner.
+        type: string
+        default: "ubuntu-latest"
 
 permissions:
   contents: read
@@ -50,7 +58,7 @@ permissions:
 
 jobs:
   auditar:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Revisar el PR asociado al commit
         id: rev
