@@ -22,6 +22,14 @@ on:
         description: "Tipo de release-please (simple, node, python...)"
         type: string
         default: "simple"
+      runner:
+        description: >
+          Etiqueta del runner. "ubuntu-latest" (default) paga minutos de
+          Actions; "self-hosted" corre en el runner de ops y no consume el
+          plan de minutos. Este job no hace checkout ni instala nada — solo
+          llama a la API de GitHub — así que es seguro en cualquier runner.
+        type: string
+        default: "ubuntu-latest"
     outputs:
       released:
         description: "true si se publicó una versión nueva"
@@ -36,7 +44,7 @@ permissions:
 jobs:
   release:
     name: release-please
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     outputs:
       released: ${{ steps.rp.outputs.release_created }}
       tag: ${{ steps.rp.outputs.tag_name }}
