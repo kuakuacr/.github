@@ -120,7 +120,13 @@ jobs:
         if: inputs.yaml
         run: |
           set -euo pipefail
-          pipx install yamllint
+          # --force, no "pipx install" a secas: en el runner self-hosted el
+          # contenedor no siempre se recicla entre corridas (EPHEMERAL no
+          # garantiza filesystem limpio), y una segunda corrida sobre el
+          # mismo contenedor encontraba el venv de una corrida anterior y
+          # fallaba con "Not installing to existing directory" — un CI que
+          # pasaba la primera vez y reventaba la segunda, en el mismo repo.
+          pipx install --force yamllint
           # Preset `relaxed`: los problemas REALES (sintaxis inválida, claves
           # duplicadas) siguen siendo errores y hacen fallar el build; lo cosmético
           # (indentación, líneas largas, comentarios) baja a advertencia.
