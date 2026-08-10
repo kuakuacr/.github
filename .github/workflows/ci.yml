@@ -43,9 +43,16 @@ env:
   GITLEAKS_VERSION: "8.30.1"
   HADOLINT_VERSION: "2.14.0"
 
+# Un solo job, no dos: GitHub factura cada job redondeado hacia arriba al
+# minuto. Con gitleaks y lint como jobs separados, una corrida de 40s de cada
+# uno facturaba 2 minutos aunque el reloj real fuera de 1. Fusionados y
+# secuenciales (gitleaks primero, siempre), el piso baja a 1 minuto por
+# corrida — a costa de que un fallo de lint ya no corre en paralelo con
+# gitleaks, lo cual no importa: si gitleaks encuentra un secreto, el resto
+# tampoco debería correr.
 jobs:
-  secretos:
-    name: gitleaks
+  ci:
+    name: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -101,12 +108,6 @@ jobs:
           ARGS=(git . --redact --exit-code 1)
           [ -n "${CONFIG:-}" ] && ARGS+=(--config "$CONFIG")
           gitleaks "${ARGS[@]}"
-
-  lint:
-    name: lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: yamllint
         if: inputs.yaml
