@@ -58,6 +58,54 @@ git push origin test
 Sin este paso la divergencia se acumula en cada ciclo y los conflictos se vuelven
 cada vez más difíciles de leer.
 
+### El PR de promoción `test` → `main`: dos reglas
+
+Las dos se aprendieron rompiendo el CHANGELOG, y las dos fallan **en silencio**:
+el workflow de release termina en `success` y no publica nada.
+
+```bash
+git switch test && git pull origin test
+gh pr create --base main --head test --title "feat: descripción del cambio"
+gh pr merge --squash --body "Promoción de test a main. Detalle por PR en test."
+```
+
+**1. El título lleva el prefijo real del cambio, no `chore:`.**
+
+`release-please` sólo mira el título del commit de squash. Con
+`chore: promote test to main` no hay nada que versionar, aunque adentro vengan
+diez `feat:`. Si la promoción trae features el título va `feat:`; si sólo trae
+arreglos, `fix:`. Validado en `kuakua-envios`: retitular el PR de promoción
+publicó `v1.1.0` con su entrada de CHANGELOG automáticamente.
+
+**2. El squash va con `--body` corto — no es opcional.**
+
+`gh pr merge --squash` sin `--body` concatena el mensaje completo de cada commit
+del PR. Y como el squash reescribe los SHA, los commits originales de `test`
+nunca quedan como ancestros de `main`: **cada promoción vuelve a listar el
+historial completo de `test` desde el primer PR**. En `kuakua-n8n` el mensaje
+llegó a 86 commits, 1 533 líneas y 78 KB, creciendo ~6 KB por promoción.
+
+El daño no lo hace el tamaño sino lo que arrastra. El parser que usa
+`release-please` (`@conventional-commits/parser`) aborta con una línea de cuerpo
+que **empiece en la columna 1** con `identificador(` y lleve un paréntesis
+anidado adentro:
+
+```
+JSON.stringify(String(x)), which double-quotes values …
+```
+
+La lee como un footer `tipo(scope)`, y `<scope>` no admite paréntesis:
+`unexpected token '(' … valid tokens [)]`. El commit completo se descarta
+(`commits: 0`, `No commits for path: .`) y no sale release. Ocho promociones de
+`kuakua-n8n` murieron así, todas en la misma línea, porque el mensaje sólo crece
+por el final y la línea envenenada quedó fija adentro.
+
+La misma línea a mitad de renglón o con sangría parsea bien: sólo duele en la
+columna 1. Por eso el riesgo escala con el largo del mensaje — con suficientes
+líneas, el wrap a 80 columnas termina dejando una llamada anidada al principio de
+alguna. Con `--body` corto el mensaje deja de acumular y el problema no puede
+reaparecer. `release-please` no tiene opción para ignorar el cuerpo.
+
 ### Guardrails — quién los hace cumplir
 
 `kuakuacr` es una **cuenta personal en plan Free**, donde GitHub *no* ofrece protección
@@ -99,6 +147,9 @@ chore: actualizar pin de la acción de checkout
   el tag `vX.Y.Z`, el GitHub Release y la entrada en `CHANGELOG.md`.
 - **El CHANGELOG es el registro de cambios oficial.** No se edita a mano.
 - Rollback: `gh workflow run deploy.yml -f ref=v1.3.0`.
+- Si un release no sale y el workflow igual dice `success`, empezar por
+  [las dos reglas del PR de promoción](#el-pr-de-promoción-test--main-dos-reglas):
+  el título con `chore:` y el cuerpo gigante del squash son las dos causas ya vistas.
 
 ## 6. Niveles de despliegue
 
