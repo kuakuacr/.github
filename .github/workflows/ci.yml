@@ -224,3 +224,22 @@ jobs:
           done
           [ "$FALLOS" -eq 0 ] && echo "✓ ${#FILES[@]} workflows válidos"
           exit "$FALLOS"
+
+      # El paso de arriba valida estructura y la regla D10, pero nunca miró si
+      # quedó una credencial en claro. `sanitize.py --check` existía desde el
+      # principio y no lo invocaba nadie: una contraseña real del API de Odoo
+      # vivió tres semanas en cinco workflows de kuakua-n8n, desde la
+      # importación inicial — el commit que se titulaba, justamente, "secrets
+      # replaced by markers". gitleaks tampoco la marcó: son 14 caracteres
+      # genéricos, sin forma reconocible.
+      #
+      # Un check que existe y nadie corre no protege de nada.
+      - name: Credenciales saneadas en los workflows
+        if: inputs.n8n
+        run: |
+          set -euo pipefail
+          if [ ! -f tooling/sanitize.py ]; then
+            echo "::warning::este repo no tiene tooling/sanitize.py — no se puede verificar el saneo"
+            exit 0
+          fi
+          python3 tooling/sanitize.py workflows/ --check
