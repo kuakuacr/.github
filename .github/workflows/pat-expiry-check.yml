@@ -132,3 +132,14 @@ jobs:
             gh issue create --repo "$REPO" --title "$TITULO" --body "$CUERPO"
             echo "✓ issue creado"
           fi
+
+      # Heartbeat de Uptime Kuma (G6 #59, PLAN-monitoreo.md), compartido con
+      # ci-runner-pat-expiry.yml de kuakua-infra — ambos vigilan el mismo tipo
+      # de falla silenciosa (un PAT que expira sin que nadie lo note) y a la
+      # misma frecuencia semanal, así que un solo monitor Push alcanza. No
+      # depende de si se encontró un problema: el job no falla en ningún caso
+      # detectado (eso ya abre su propio issue/aviso), solo si el checker en
+      # sí se rompe.
+      - name: Push a Uptime Kuma
+        if: success()
+        run: curl -fsS --max-time 10 "${{ secrets.KUMA_PUSH_PAT_EXPIRY }}" >/dev/null

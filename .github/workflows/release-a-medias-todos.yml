@@ -200,3 +200,16 @@ jobs:
               -d "$(jq -n --arg t "$TEXTO" '{text:$t}')" >/dev/null 2>&1 \
               && echo "  pumble: enviado" || echo "  pumble: falló"
           fi
+
+  # Heartbeat de Uptime Kuma (G6 #58, PLAN-monitoreo.md). Solo corre si NINGUNA
+  # entrada del matrix falló — ninguna falla hoy por un "release a medias"
+  # detectado (eso solo manda el aviso de Slack/Pumble de arriba), así que
+  # llegar acá significa que el propio detector corrió de punta a punta en los
+  # 8 repos. Su ausencia delata que el cron dejó de correr o el runner se
+  # rompió, no que haya un release a medias — eso ya tiene su propia alerta.
+  heartbeat-kuma:
+    needs: verificar
+    runs-on: ubuntu-latest
+    steps:
+      - name: Push a Uptime Kuma
+        run: curl -fsS --max-time 10 "${{ secrets.KUMA_PUSH_RELEASE_A_MEDIAS }}" >/dev/null
