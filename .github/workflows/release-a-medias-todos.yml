@@ -204,25 +204,25 @@ jobs:
   # G6 #58 del plan de monitoreo. Job aparte (no un paso mas de `verificar`)
   # porque el heartbeat tiene que reflejar el resultado agregado de TODO el
   # matrix, no de una sola entrada -- pushea solo si las 8 terminaron bien.
+  #
+  # Este repo no tiene runner self-hosted propio ni acceso a la tailnet. Se
+  # probó un nodo efímero tag:ci (tailscale/github-action), pero la ACL de
+  # Tailscale lo confina a propósito al puerto 22 de tag:prod
+  # (kuakua-infra/docs/ARCHITECTURE.md) -- nunca puede llegar al 443 de
+  # Kuma, y ampliar esa ACL abriría TODOS los servicios .io de core/ops a
+  # cualquier runner de CI de cualquier repo. En vez de eso, se dispara el
+  # relay de kuakua-infra (kuakua-infra#199): su runner self-hosted ya está
+  # en la tailnet y hace el push por nosotros.
   heartbeat:
     needs: verificar
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Unirse a la tailnet (solo para el push de heartbeat)
+      - name: Push heartbeat a Kuma (vía relay de kuakua-infra)
         if: needs.verificar.result == 'success'
-        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
-
-      - name: Push heartbeat a Kuma
-        if: needs.verificar.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_PAT }}
         run: |
-          # Un nodo tag:ci recien unido no resuelve status.kuakua.io por DNS
-          # (depende de CoreDNS en core, no de MagicDNS) -- se apunta
-          # directo a la IP de ops en la tailnet. Confirmado en vivo
-          # (kuakua-infra#196): sin esto, curl: (6) Could not resolve host.
-          curl -sS --resolve status.kuakua.io:443:100.66.66.1 \
-            "https://status.kuakua.io/api/push/3v6BXpbW5R?status=up&msg=OK&ping=" || true
+          gh workflow run heartbeat-relay.yml \
+            --repo kuakuacr/kuakua-infra \
+            -f token="${{ secrets.KUMA_PUSH_RELEASE_A_MEDIAS }}" || true
