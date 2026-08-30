@@ -132,3 +132,27 @@ jobs:
             gh issue create --repo "$REPO" --title "$TITULO" --body "$CUERPO"
             echo "✓ issue creado"
           fi
+
+      # G6 #59 del plan de monitoreo (status.kuakua.io/PLAN-monitoreo.md).
+      #
+      # Este repo no tiene runner self-hosted propio ni acceso a la tailnet.
+      # Se probó un nodo efímero tag:ci (tailscale/github-action), pero la
+      # ACL de Tailscale lo confina a propósito al puerto 22 de tag:prod
+      # (kuakua-infra/docs/ARCHITECTURE.md) -- nunca puede llegar al 443 de
+      # Kuma. Ampliar esa ACL abriría TODOS los servicios .io de core/ops a
+      # cualquier runner de CI de cualquier repo, no solo a este heartbeat.
+      #
+      # En vez de eso, se dispara el relay de kuakua-infra (kuakua-infra#199):
+      # su runner self-hosted ya está en la tailnet, así que hace el push por
+      # nosotros. RELEASE_BOT_PAT ya tiene actions:write sobre kuakua-infra
+      # (lo usa este mismo repo para otras cosas); no hace falta un secreto
+      # nuevo salvo el token de push, que es de bajo valor (solo marca ESTE
+      # monitor puntual como "up").
+      - name: Push heartbeat a Kuma (vía relay de kuakua-infra)
+        if: steps.probe.outputs.estado == 'ok'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_PAT }}
+        run: |
+          gh workflow run heartbeat-relay.yml \
+            --repo kuakuacr/kuakua-infra \
+            -f token="${{ secrets.KUMA_PUSH_PAT_EXPIRY }}" || true
