@@ -45,6 +45,11 @@ jobs:
           # Desde el 2-oct: brand quitó su cron propio (corría en ubuntu-latest
           # de un repo privado, minutos cobrados) y se verifica acá.
           - kuakua-brand
+          # Desde el 2-oct: repos creados después de la consolidación, que nunca
+          # tuvieron esta verificación.
+          - kuakua-envios
+          - kuakua-edocs
+          - kuakua-apartados
     steps:
       - uses: actions/checkout@v4
         with:
