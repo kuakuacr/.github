@@ -42,6 +42,9 @@ jobs:
           - kuakua-cms
           - kuakua-web
           - kuakua-chatwoot
+          # Desde el 2-oct: brand quitó su cron propio (corría en ubuntu-latest
+          # de un repo privado, minutos cobrados) y se verifica acá.
+          - kuakua-brand
     steps:
       - uses: actions/checkout@v4
         with:
