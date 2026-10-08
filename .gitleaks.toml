@@ -123,6 +123,24 @@ description = "Auth key de Tailscale"
 regex = '''\btskey-(auth|client)-[A-Za-z0-9\-]{10,}'''
 tags = ["tailscale"]
 
+[[rules]]
+id = "kuakua-pk-api-key"
+description = "Llave propia pk_kuakua_ (webhooks internos de n8n)"
+regex = '''\bpk_kuakua_[A-Za-z0-9_-]{16,}'''
+keywords = ["pk_kuakua_"]
+tags = ["kuakua", "n8n"]
+
+# La llave de "Postiz - Control On-Demand" entró literal en el import inicial de
+# kuakua-n8n y quedó en esos dos commits. Se rotó el 2026-10-08 (kuakua-n8n#635):
+# el valor viejo ya no autentica. Se exceptúan sólo esos commits, por SHA y sólo
+# para esta regla; cualquier pk_kuakua_ nuevo sigue bloqueando el PR.
+[[rules.allowlists]]
+description = "llave de Postiz ya rotada, en la historia de kuakua-n8n"
+commits = [
+  "f5f4a7bdd56964f034fb207671fafde53d3924ee",
+  "8d21cb1cd74fe551c0fe23c1c7d1de056ca13f9b",
+]
+
 # ─────────────────────────────────────────────────────────────
 # Exclusiones
 # ─────────────────────────────────────────────────────────────
